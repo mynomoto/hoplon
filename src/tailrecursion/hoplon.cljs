@@ -50,6 +50,14 @@
   ([this k] (.data (js/jQuery this) (str k)))
   ([this k v] (.data (js/jQuery this) (str k) v) this))
 
+(defn- hdata*
+  ([this] (aget this "_hoplon_data"))
+  ([this v] (doto this (aset "_hoplon_data" v))))
+
+(defn- hdata
+  ([this k] (get (hdata* this) k))
+  ([this k v] (doto this (hdata* (assoc (hdata* this) k v)))))
+
 ;; env ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn unsplice [forms]
@@ -74,7 +82,7 @@
       :else           [{} (unsplice args)])))
 
 (defn add-attributes! [this attr]
-  (if-let [tpl (aget this "_hoplon_attr")]
+  (if-let [tpl (jqdata this ::attr)]
     (do (swap! tpl merge attr) this)
     (let [key*   #(let [n (let [s (name %2), c (last s)]
                             (if-not (= \= c) s (.slice s 0 -1)))
@@ -122,20 +130,20 @@
     #(try (.insertBefore %1 %2 %3) (catch js/Error _))))
 
 (defn parent-node [this]
-  (or (jqdata this :hoplon-parent) (.-parentNode this)))
+  (or (jqdata this ::parent) (.-parentNode this)))
 
 (defn first-child [this]
-  (if-let [kids (aget this "_hoplon_children")]
+  (if-let [kids (jqdata this ::kids)]
     (first (.call kids))
     (.-firstChild this)))
 
 (defn get-children [this]
-  (if-let [kids (aget this "_hoplon_children")]
+  (if-let [kids (jqdata this ::kids)]
     (.call kids)
     (.. (js/jQuery this) children get)))
 
 (defn remove-children [this]
-  (if-let [empty (aget this "_hoplon_empty")]
+  (if-let [empty (jqdata this ::empty)]
     (.call empty)
     (.. (js/jQuery this) empty)))
 
@@ -143,47 +151,69 @@
   (remove-children this)
   (add-children! this (if (sequential? new-children) new-children [new-children])))
 
-(defn add-children! [this [child-cell & _ :as kids]]
-  (if (cell? child-cell)
-    (do (replace-children! this @child-cell)
-        (add-watch child-cell (gensym) #(replace-children! this %4)))
-    (let [node #(cond (string? %) ($text %) (node? %) %)]
-      (doseq [x (keep node (unsplice kids))] (append-child this x))))
+(defn- set-tag   [this tags] (jqdata this ::tag tags))
+(defn- get-tag   [this]      (or (jqdata this ::tag) #{}))
+(defn- has-tag?  [this tag]  (contains? (get-tag this) tag))
+(defn- add-tag   [this tag]  (set-tag this (conj (get-tag this) tag)))
+(defn- sentinel  []          (jqdata (span :css {:display "none"}) ::sentinel true))
+(defn- sentinel? [this]      (and (node? this) (jqdata this ::sentinel)))
+
+(defn- replace-tagged! [this tag new-children]
+  (let [old-children (get-children this)]
+    (loop [[kid & kids :as kids'] old-children
+           [old & olds :as olds'] (filter #(has-tag? % tag) old-children)
+           [new & news :as news'] (map #(add-tag % tag) new-children)]
+      (cond
+        (and new (not old) (not kid))    (do (append-child this new)      (recur kids  olds  news))
+        (and (not new) old (= old kid))  (do (remove-child this kid)      (recur kids  olds  news))
+        (and new old (= old kid))        (do (replace-child this new old) (recur kids  olds  news))
+        (and new (not old) kid)          (do (insert-before this new kid) (recur kids' olds  news))
+        (and new old kid (not= old kid))                                  (recur kids  olds' news')))))
+
+(defn add-children! [this new-children]
+  (let [node #(cond (string? %) ($text %) (or (cell? %) (node? %)) %)
+        prep #(keep node (unsplice %))]
+    (doseq [x (prep new-children)]
+      (if-not (cell? x)
+        (append-child this x)
+        (let [tag   (gensym)
+              ->seq #(seq (prep (if (sequential? %) % [%])))
+              kids' (cell= (or (->seq x) [(sentinel)]))]
+          (doseq [k @kids'] (append-child this (add-tag k tag)))
+          (add-watch kids' (gensym) #(replace-tagged! this tag %4))))))
   this)
 
 (defn tpl* [tpl]
   (fn [& args]
-    (let [attr     (cell {})
-          children (cell [])
-          this     (tpl attr children)
-          setp     #(doto % (jqdata :hoplon-parent this))]
+    (let [attr (cell {})
+          kids (cell [])
+          this (tpl attr kids)
+          setp #(doto % (jqdata ::parent this))]
       (doto this
-        (aset "_hoplon_attr"     attr)
-        (aset "_hoplon_children" #(deref children))
-        (aset "_hoplon_empty"    #(swap! children empty))
-        (aset "appendChild"      #(swap! children concat [(setp %)]))
-        (aset "removeChild"      #(swap! children (partial filter (partial not= %))))
-        (aset "replaceChild"     #(swap! children (partial map (fn [x] (if (= x %2) (setp %1) x)))))
-        (aset "insertBefore"     #(swap! children (partial mapcat (fn [x] (if (= x %2) [(setp %1) x] [x])))))
+        (jqdata ::attr  attr)
+        (jqdata ::kids  #(deref kids))
+        (jqdata ::empty #(swap! kids empty))
+        (aset "appendChild"  #(swap! kids concat [(setp %)]))
+        (aset "removeChild"  #(swap! kids (partial filter (partial not= %))))
+        (aset "replaceChild" #(swap! kids (partial map (fn [x] (if (= x %2) (setp %1) x)))))
+        (aset "insertBefore" #(swap! kids (partial mapcat (fn [x] (if (= x %2) [(setp %1) x] [x])))))
         (apply args)))))
 
 (defn loop-tpl*
   [items reverse? tpl]
-  (let [pool-size  (cell  0)
+  (let [tag        (gensym)
+        pool-size  (cell  0)
         items-seq  (cell= (seq items))
         cur-count  (cell= (count items-seq))
-        show-ith?  #(cell= (< % cur-count))
-        ith-item   #(cell= (safe-nth items-seq %))]
-    (with-let [d (span)]
+        ith-item   #(cell= (safe-nth items-seq %))
+        show-ith?  #(cell= (when (and (< %1 cur-count) (not (sentinel? (safe-nth items-seq %1)))) %2))]
+    (with-let [d (sentinel)]
       (when-dom d
         #(let [p (parent-node d)]
-           (remove-child p d)
            (cell= (when (< pool-size cur-count)
                     (doseq [i (range pool-size cur-count)]
-                      (let [e ((tpl (ith-item i)) ::toggle (show-ith? i))]
-                        (if-not reverse?
-                          (append-child p e)
-                          (insert-before p e (first-child p)))))
+                      (let [e ((tpl (ith-item i)) ::toggle (show-ith? i d))]
+                        (insert-before p e d)))
                     (reset! ~(cell pool-size) cur-count))))))))
 
 (defn ^:deprecated on-append! [this f]
@@ -466,11 +496,11 @@
 
 (defmethod do! ::toggle
   [elem _ v]
-  (if-let [p (jqdata elem :hoplon-parent)]
-    (let [rm #(apply jqdata elem :hoplon-removed %&)
-          rc #(do (rm true) (remove-child p elem))
-          ac #(when (rm) (rm false) (append-child p elem))]
-      ((if v ac rc) p elem))
+  (if-let [p (jqdata elem ::parent)]
+    (let [rm? #(apply jqdata elem ::removed %&)
+          rem #(do (rm? true) (remove-child p elem))
+          add #(when (rm?) (rm? false) (insert-before p elem v))]
+      (if v (add) (rem)))
     (do! elem :toggle v)))
 
 (defmulti on! (fn [elem event callback] event) :default ::default)
