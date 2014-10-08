@@ -11,7 +11,7 @@
    [tailrecursion.javelin :refer [with-let cell= prop-cell]]
    [tailrecursion.hoplon  :refer [with-timeout]])
   (:require
-   [tailrecursion.javelin :refer [cell? cell lift destroy-cell!]] 
+   [tailrecursion.javelin :refer [cell? cell formula]] 
    [cljs.reader           :refer [read-string]]
    [clojure.string        :refer [split join blank?]]))
 
@@ -183,7 +183,7 @@
           (add-watch kids' (gensym) #(replace-tagged! this tag %4))))))
   this)
 
-(defn tpl* [tpl]
+(defn component* [tpl]
   (fn [& args]
     (let [attr (cell {})
           kids (cell [])
@@ -199,25 +199,23 @@
         (aset "insertBefore" #(swap! kids (partial mapcat (fn [x] (if (= x %2) [(setp %1) x] [x])))))
         (apply args)))))
 
-(defn loop-tpl*
-  [items reverse? tpl]
-  (let [tag        (gensym)
-        pool-size  (cell  0)
-        items-seq  (cell= (seq items))
-        cur-count  (cell= (count items-seq))
-        ith-item   #(cell= (safe-nth items-seq %))
-        show-ith?  #(cell= (when (and (< %1 cur-count) (not (sentinel? (safe-nth items-seq %1)))) %2))]
+(defn splicing* [items-seq f]
+  (let [tag       (gensym)
+        pool-size (cell 0)
+        cur-count ((formula count) items-seq)
+        ith-item  #((formula safe-nth) items-seq %)
+        show-ith? #(cell= (when (and (< %1 cur-count) (not (sentinel? (safe-nth items-seq %1)))) %2))]
     (with-let [d (sentinel)]
       (when-dom d
         #(let [p (parent-node d)]
-           (cell= (when (< pool-size cur-count)
-                    (doseq [i (range pool-size cur-count)]
-                      (let [e ((tpl (ith-item i)) ::toggle (show-ith? i d))]
-                        (insert-before p e d)))
-                    (reset! ~(cell pool-size) cur-count))))))))
-
-(defn ^:deprecated on-append! [this f]
-  (set! (.-hoplonIFn this) f))
+           ((formula (fn [pool-size cur-count f ith-item reset-pool-size!]
+                       (when (< pool-size cur-count)
+                         (doseq [i (range pool-size cur-count)]
+                           (let [e ((f (ith-item i)) :toggle (show-ith? i d))]
+                             (print :got-here e)
+                             (insert-before p e d)))
+                         (reset-pool-size! cur-count))))
+            pool-size cur-count f ith-item (partial reset! pool-size)))))))
 
 (extend-type js/Element
   IPrintWithWriter
@@ -228,9 +226,7 @@
   (-invoke
     ([this & args]
        (let [[attr kids] (parse-args args)]
-         (if (.-hoplonIFn this)
-           (doto this (.hoplonIFn attr kids))
-           (doto this (add-attributes! attr) (add-children! kids)))))))
+         (doto this (add-attributes! attr) (add-children! kids))))))
 
 (defn- make-singleton-ctor [tag]
   (fn [& args]

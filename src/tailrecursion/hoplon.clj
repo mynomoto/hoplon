@@ -59,6 +59,10 @@
                      (concat prep [sym (list* op args*)])))]
     (if-not (flatten? expr) [sym expr] (flatten expr))))
 
+(defn bind-syms [form]
+  (let [sym? #(and (symbol? %) (not= '& %))]
+    (->> form (tree-seq coll? seq) (filter sym?) distinct)))
+
 (defmacro def-values
   "Destructuring def, similar to scheme's define-values."
   ([bindings values] 
@@ -77,34 +81,36 @@
   (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `(defn ~name ~@forms))]
     `(def ~name (elem ~bind ~@body))))
 
-(defmacro tpl
+(defmacro component
   "FIXME: document this"
   [[attr kids] & body]
-  `(tpl*
+  `(component*
      (fn [attr# kids#]
        (tailrecursion.javelin/cell-let [~attr attr# ~kids kids#] ~@body))))
 
-(defmacro deftpl
+(defmacro defcomponent
   "FIXME: document this"
   [name & forms]
   (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `(defn ~name ~@forms))]
-    `(def ~name (tpl ~bind ~@body))))
+    `(def ~name (component ~bind ~@body))))
 
-(defmacro loop-tpl
+(defmacro splicing
   "FIXME: document this"
   [& args]
-  (let [[_ {:keys [bindings bind-ids reverse]} [tpl]]
-        (parse-e (cons '_ args))
-        [bindings items] bindings
-        mksym     (fn [& _] (gensym "hl-auto-"))
-        gsyms     (into {} (map (juxt identity mksym) bind-ids))
-        sym*      `(str (gensym "hl-auto-"))
-        id-binds  (interleave (vals gsyms) (repeat sym*))
-        body      (walk/postwalk #(get gsyms % %) tpl)]
-    `(loop-tpl* ~items ~reverse
-       (fn [item#]
-         (let [~@id-binds]
-           (tailrecursion.javelin/cell-let [~bindings item#] ~body))))))
+  (let [[_ {seq-exprs :for with-expr :with} body] (parse-e (cons '_ args))]
+    (if with-expr
+      with-expr
+      (let [pairs  (partition 2 seq-exprs)
+            lets   (->> pairs (filter (comp (partial = :let) first)) (mapcat second))
+            binds* (->> pairs (take-while (complement (comp keyword? first))))
+            mods*  (->> pairs (drop-while (complement (comp keyword? first))) (mapcat identity))
+            syms   (->> binds* (mapcat (comp bind-syms first)))
+            exprs  (->> binds* (map second))
+            gens   (take (count exprs) (repeatedly gensym))
+            fors   (-> (->> binds* (map first)) (interleave gens) (concat mods*))]
+        `(splicing*
+           ((tailrecursion.javelin/formula (fn [~@gens] (for [~@fors] [~@syms]))) ~@exprs)
+           (fn [item#] (tailrecursion.javelin/cell-let [[~@syms] item#, ~@lets] ~@body)))))))
 
 (defmacro text
   "FIXME: document this"
