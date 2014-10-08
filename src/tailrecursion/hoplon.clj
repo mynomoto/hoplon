@@ -66,11 +66,29 @@
   ([docstring bindings values]
    (do-def docstring bindings values)))
 
+(defmacro elem
+  "FIXME: document this"
+  [bind & body]
+  `(fn [& args#] (let [~bind (parse-args args#)] ~@body)))
+
 (defmacro defelem
   "FIXME: document this"
   [name & forms]
   (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `(defn ~name ~@forms))]
-    `(def ~name (fn [& args#] (let [~bind (parse-args args#)] ~@body)))))
+    `(def ~name (elem ~bind ~@body))))
+
+(defmacro tpl
+  "FIXME: document this"
+  [[attr kids] & body]
+  `(tpl*
+     (fn [attr# kids#]
+       (tailrecursion.javelin/cell-let [~attr attr# ~kids kids#] ~@body))))
+
+(defmacro deftpl
+  "FIXME: document this"
+  [name & forms]
+  (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `(defn ~name ~@forms))]
+    `(def ~name (tpl ~bind ~@body))))
 
 (defmacro loop-tpl
   "FIXME: document this"

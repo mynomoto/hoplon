@@ -15,7 +15,7 @@
    [cljs.reader           :refer [read-string]]
    [clojure.string        :refer [split join blank?]]))
 
-(declare do! on! $text add-children!)
+(declare do! on! $text span add-children!)
 
 (def is-ie8 (not (aget js/window "Node")))
 
@@ -46,6 +46,18 @@
   ([f] (timeout f 0))
   ([f t] (.setTimeout js/window f t)))
 
+(defn jqdata
+  ([this k] (.data (js/jQuery this) (str k)))
+  ([this k v] (.data (js/jQuery this) (str k) v) this))
+
+(defn- hdata*
+  ([this] (aget this "_hoplon_data"))
+  ([this v] (doto this (aset "_hoplon_data" v))))
+
+(defn- hdata
+  ([this k] (get (hdata* this) k))
+  ([this k v] (doto this (hdata* (assoc (hdata* this) k v)))))
+
 ;; env ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
 (defn unsplice [forms]
@@ -59,58 +71,152 @@
         (if (.contains (.-documentElement js/document) this) (f) (timeout doit 20))))))
 
 (defn parse-args [[head & tail :as args]]
-  (let [kw1? (comp keyword? first)
-        mkkw #(->> (partition 2 %) (take-while kw1?) (map vec))
-        drkw #(->> (partition 2 2 [] %) (drop-while kw1?) (mapcat identity))]
+  (let [kw1?  (comp keyword? first)
+        mapc? #(and (cell? %) (map? @%))
+        mkkw  #(->> (partition 2 %) (take-while kw1?) (map vec))
+        drkw  #(->> (partition 2 2 [] %) (drop-while kw1?) (mapcat identity))]
     (cond
       (map?     head) [head (unsplice tail)]
+      (mapc?    head) [{:attr head} (unsplice tail)]
       (keyword? head) [(into {} (mkkw args)) (unsplice (drkw args))]
       :else           [{} (unsplice args)])))
 
 (defn add-attributes! [this attr]
-  (let [key*   #(let [n (let [s (name %2), c (last s)]
-                          (if-not (= \= c) s (.slice s 0 -1)))
-                      p (.substr n 0 3)] 
-                  (keyword (namespace %2) (if-not (= %1 p) n (.substr n 3))))
-        dokey  (partial key* "do-")
-        onkey  (partial key* "on-")
-        dos    (atom {}) 
-        ons    (atom {})
-        addcls #(join " " (-> %1 (split #" ") set (into (split %2 #" "))))]
-    (doseq [[k v] attr]
-      (cond
-        (cell? v) (swap! dos assoc (dokey k) v)
-        (fn? v)   (swap! ons assoc (onkey k) v)
-        :else     (do! this (dokey k) v)))
-    (when (seq @dos)
-      (with-timeout 0
-        (doseq [[k v] @dos]
-          (do! this k @v)
-          (add-watch v (gensym) #(do! this k %4)))))
-    (when (seq @ons)
-      (with-timeout 0
-        (doseq [[k v] @ons]
-          (on! this k v)))) 
-    this))
+  (if-let [tpl (jqdata this ::attr)]
+    (do (swap! tpl merge attr) this)
+    (let [key*   #(let [n (let [s (name %2), c (last s)]
+                            (if-not (= \= c) s (.slice s 0 -1)))
+                        p (.substr n 0 3)] 
+                    (keyword (namespace %2) (if-not (= %1 p) n (.substr n 3))))
+          dokey  (partial key* "do-")
+          onkey  (partial key* "on-")
+          dos    (atom {}) 
+          ons    (atom {})
+          addcls #(join " " (-> %1 (split #" ") set (into (split %2 #" "))))]
+      (doseq [[k v] attr]
+        (cond
+          (cell? v) (swap! dos assoc (dokey k) v)
+          (fn? v)   (swap! ons assoc (onkey k) v)
+          :else     (do! this (dokey k) v)))
+      (when (seq @dos)
+        (with-timeout 0
+          (doseq [[k v] @dos]
+            (do! this k @v)
+            (add-watch v (gensym) #(do! this k %4)))))
+      (when (seq @ons)
+        (with-timeout 0
+          (doseq [[k v] @ons]
+            (on! this k v)))) 
+      this)))
 
 (def append-child
   (if-not is-ie8
     #(.appendChild %1 %2)
     #(try (.appendChild %1 %2) (catch js/Error _))))
 
+(def remove-child
+  (if-not is-ie8
+    #(.removeChild %1 %2)
+    #(try (.removeChild %1 %2) (catch js/Error _))))
+
+(def replace-child
+  (if-not is-ie8
+    #(.replaceChild %1 %2 %3)
+    #(try (.replaceChild %1 %2 %3) (catch js/Error _))))
+
+(def insert-before
+  (if-not is-ie8
+    #(.insertBefore %1 %2 %3)
+    #(try (.insertBefore %1 %2 %3) (catch js/Error _))))
+
+(defn parent-node [this]
+  (or (jqdata this ::parent) (.-parentNode this)))
+
+(defn first-child [this]
+  (if-let [kids (jqdata this ::kids)]
+    (first (.call kids))
+    (.-firstChild this)))
+
+(defn get-children [this]
+  (if-let [kids (jqdata this ::kids)]
+    (.call kids)
+    (.. (js/jQuery this) children get)))
+
+(defn remove-children [this]
+  (if-let [empty (jqdata this ::empty)]
+    (.call empty)
+    (.. (js/jQuery this) empty)))
+
 (defn replace-children! [this new-children]
-  (.empty (js/jQuery this))
+  (remove-children this)
   (add-children! this (if (sequential? new-children) new-children [new-children])))
 
-(defn add-children! [this [child-cell & _ :as kids]]
-  (if (cell? child-cell)
-    (do (replace-children! this @child-cell)
-        (add-watch child-cell (gensym) #(replace-children! this %4)))
-    (let [node #(cond (string? %) ($text %) (node? %) %)]
-      (doseq [x (keep node (unsplice kids))] (append-child this x))))
+(defn- set-tag   [this tags] (jqdata this ::tag tags))
+(defn- get-tag   [this]      (or (jqdata this ::tag) #{}))
+(defn- has-tag?  [this tag]  (contains? (get-tag this) tag))
+(defn- add-tag   [this tag]  (set-tag this (conj (get-tag this) tag)))
+(defn- sentinel  []          (jqdata (span :css {:display "none"}) ::sentinel true))
+(defn- sentinel? [this]      (and (node? this) (jqdata this ::sentinel)))
+
+(defn- replace-tagged! [this tag new-children]
+  (let [old-children (get-children this)]
+    (loop [[kid & kids :as kids'] old-children
+           [old & olds :as olds'] (filter #(has-tag? % tag) old-children)
+           [new & news :as news'] (map #(add-tag % tag) new-children)]
+      (cond
+        (and new (not old) (not kid))    (do (append-child this new)      (recur kids  olds  news))
+        (and (not new) old (= old kid))  (do (remove-child this kid)      (recur kids  olds  news))
+        (and new old (= old kid))        (do (replace-child this new old) (recur kids  olds  news))
+        (and new (not old) kid)          (do (insert-before this new kid) (recur kids' olds  news))
+        (and new old kid (not= old kid))                                  (recur kids  olds' news')))))
+
+(defn add-children! [this new-children]
+  (let [node #(cond (string? %) ($text %) (or (cell? %) (node? %)) %)
+        prep #(keep node (unsplice %))]
+    (doseq [x (prep new-children)]
+      (if-not (cell? x)
+        (append-child this x)
+        (let [tag   (gensym)
+              ->seq #(seq (prep (if (sequential? %) % [%])))
+              kids' (cell= (or (->seq x) [(sentinel)]))]
+          (doseq [k @kids'] (append-child this (add-tag k tag)))
+          (add-watch kids' (gensym) #(replace-tagged! this tag %4))))))
   this)
 
-(defn on-append! [this f]
+(defn tpl* [tpl]
+  (fn [& args]
+    (let [attr (cell {})
+          kids (cell [])
+          this (tpl attr kids)
+          setp #(doto % (jqdata ::parent this))]
+      (doto this
+        (jqdata ::attr  attr)
+        (jqdata ::kids  #(deref kids))
+        (jqdata ::empty #(swap! kids empty))
+        (aset "appendChild"  #(swap! kids concat [(setp %)]))
+        (aset "removeChild"  #(swap! kids (partial filter (partial not= %))))
+        (aset "replaceChild" #(swap! kids (partial map (fn [x] (if (= x %2) (setp %1) x)))))
+        (aset "insertBefore" #(swap! kids (partial mapcat (fn [x] (if (= x %2) [(setp %1) x] [x])))))
+        (apply args)))))
+
+(defn loop-tpl*
+  [items reverse? tpl]
+  (let [tag        (gensym)
+        pool-size  (cell  0)
+        items-seq  (cell= (seq items))
+        cur-count  (cell= (count items-seq))
+        ith-item   #(cell= (safe-nth items-seq %))
+        show-ith?  #(cell= (when (and (< %1 cur-count) (not (sentinel? (safe-nth items-seq %1)))) %2))]
+    (with-let [d (sentinel)]
+      (when-dom d
+        #(let [p (parent-node d)]
+           (cell= (when (< pool-size cur-count)
+                    (doseq [i (range pool-size cur-count)]
+                      (let [e ((tpl (ith-item i)) ::toggle (show-ith? i d))]
+                        (insert-before p e d)))
+                    (reset! ~(cell pool-size) cur-count))))))))
+
+(defn ^:deprecated on-append! [this f]
   (set! (.-hoplonIFn this) f))
 
 (extend-type js/Element
@@ -323,10 +429,12 @@
   [elem _ kvs]
   (let [e (js/jQuery elem)]
     (doseq [[k v] kvs]
-      (let [k (name k)]
-        (if (= false v)
-          (.removeAttr e k)
-          (.attr e k (if (= true v) k v)))))))
+      (if (cell? v)
+        (add-attributes! elem {k v})
+        (let [k (name k)]
+          (if (= false v)
+            (.removeAttr e k)
+            (.attr e k (if (= true v) k v))))))))
 
 (defmethod do! :class
   [elem _ kvs] 
@@ -386,6 +494,15 @@
           elem (js/jQuery elem)]
       (.animate body (clj->js {:scrollTop (.-top (.offset elem))})))))
 
+(defmethod do! ::toggle
+  [elem _ v]
+  (if-let [p (jqdata elem ::parent)]
+    (let [rm? #(apply jqdata elem ::removed %&)
+          rem #(do (rm? true) (remove-child p elem))
+          add #(when (rm?) (rm? false) (insert-before p elem v))]
+      (if v (add) (rem)))
+    (do! elem :toggle v)))
+
 (defmulti on! (fn [elem event callback] event) :default ::default)
 
 (extend-type js/jQuery.Event
@@ -395,25 +512,6 @@
 (defmethod on! ::default
   [elem event callback]
   (when-dom elem #(.on (js/jQuery elem) (name event) callback)))
-
-(defn loop-tpl*
-  [items reverse? tpl]
-  (let [pool-size  (cell  0)
-        items-seq  (cell= (seq items))
-        cur-count  (cell= (count items-seq))
-        show-ith?  #(cell= (< % cur-count))
-        ith-item   #(cell= (safe-nth items-seq %))]
-    (with-let [d (span)]
-      (when-dom d
-        #(let [p (.-parentNode d)]
-           (.removeChild p d)
-           (cell= (when (< pool-size cur-count)
-                    (doseq [i (range pool-size cur-count)]
-                      (let [e ((tpl (ith-item i)) :do-toggle (show-ith? i))]
-                        (if-not reverse?
-                          (.appendChild p e)
-                          (.insertBefore p e (.-firstChild p)))))
-                    (reset! ~(cell pool-size) cur-count))))))))
 
 (defn route-cell
   "Manage the URL hash via Javelin cells. There are three arities:
