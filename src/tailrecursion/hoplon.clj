@@ -94,7 +94,7 @@
   (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `(defn ~name ~@forms))]
     `(def ~name (component ~bind ~@body))))
 
-(defmacro splicing
+(defmacro splice
   "FIXME: document this"
   [& args]
   (let [[_ {seq-exprs :for with-expr :with} [body]] (parse-e (cons '_ args))]
@@ -108,7 +108,7 @@
             exprs  (->> binds* (map second))
             gens   (take (count exprs) (repeatedly gensym))
             fors   (-> (->> binds* (map first)) (interleave gens) (concat mods*))]
-        `(splicing*
+        `(splice*
            ((tailrecursion.javelin/formula (fn [~@gens] (for [~@fors] [~@syms]))) ~@exprs)
            (fn [item#] (tailrecursion.javelin/cell-let [[~@syms] item#, ~@lets] ~body)))))))
 

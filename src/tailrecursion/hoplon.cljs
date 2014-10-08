@@ -199,7 +199,7 @@
         (aset "insertBefore" #(swap! kids (partial mapcat (fn [x] (if (= x %2) [(setp %1) x] [x])))))
         (apply args)))))
 
-(defn splicing* [items-seq f]
+(defn splice* [items-seq f]
   (let [tag       (gensym)
         pool-size (cell 0)
         cur-count (cell= (count items-seq))
