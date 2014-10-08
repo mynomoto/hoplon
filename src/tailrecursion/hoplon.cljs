@@ -202,20 +202,17 @@
 (defn splicing* [items-seq f]
   (let [tag       (gensym)
         pool-size (cell 0)
-        cur-count ((formula count) items-seq)
-        ith-item  #((formula safe-nth) items-seq %)
-        show-ith? #(cell= (when (and (< %1 cur-count) (not (sentinel? (safe-nth items-seq %1)))) %2))]
+        cur-count (cell= (count items-seq))
+        ith-item  #(cell= (safe-nth items-seq %))
+        show-ith? #(cell= (when (and (< %1 cur-count) (not (sentinel? (first (safe-nth items-seq %1))))) %2))]
     (with-let [d (sentinel)]
       (when-dom d
         #(let [p (parent-node d)]
-           ((formula (fn [pool-size cur-count f ith-item reset-pool-size!]
-                       (when (< pool-size cur-count)
-                         (doseq [i (range pool-size cur-count)]
-                           (let [e ((f (ith-item i)) :toggle (show-ith? i d))]
-                             (print :got-here e)
-                             (insert-before p e d)))
-                         (reset-pool-size! cur-count))))
-            pool-size cur-count f ith-item (partial reset! pool-size)))))))
+           (cell= (when (< pool-size cur-count)
+                    (doseq [i (range pool-size cur-count)]
+                      (let [e ((f (ith-item i)) ::toggle (show-ith? i d))]
+                        (insert-before p e d)))
+                    (reset! ~(cell pool-size) cur-count))))))))
 
 (extend-type js/Element
   IPrintWithWriter

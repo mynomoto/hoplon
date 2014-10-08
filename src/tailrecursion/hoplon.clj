@@ -97,7 +97,7 @@
 (defmacro splicing
   "FIXME: document this"
   [& args]
-  (let [[_ {seq-exprs :for with-expr :with} body] (parse-e (cons '_ args))]
+  (let [[_ {seq-exprs :for with-expr :with} [body]] (parse-e (cons '_ args))]
     (if with-expr
       with-expr
       (let [pairs  (partition 2 seq-exprs)
@@ -110,7 +110,7 @@
             fors   (-> (->> binds* (map first)) (interleave gens) (concat mods*))]
         `(splicing*
            ((tailrecursion.javelin/formula (fn [~@gens] (for [~@fors] [~@syms]))) ~@exprs)
-           (fn [item#] (tailrecursion.javelin/cell-let [[~@syms] item#, ~@lets] ~@body)))))))
+           (fn [item#] (tailrecursion.javelin/cell-let [[~@syms] item#, ~@lets] ~body)))))))
 
 (defmacro text
   "FIXME: document this"
