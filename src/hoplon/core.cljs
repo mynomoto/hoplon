@@ -596,25 +596,7 @@
   removed from the DOM and cached. When the items collection grows again those
   cached elements will be reinserted into the DOM at their original index."
   [items tpl]
-  (let [on-deck   (atom ())
-        items-seq (cell= (seq items))
-        ith-item  #(cell= (safe-nth items-seq %))
-        shift!    #(with-let [x (first @%)] (swap! % rest))]
-    (with-let [current (cell [])]
-      (do-watch items-seq
-        (fn [old-items new-items]
-          (let [old  (count old-items)
-                new  (count new-items)
-                diff (- new old)]
-            (cond (pos? diff)
-                  (doseq [i (range old new)]
-                    (let [e (or (shift! on-deck) (tpl (ith-item i)))]
-                      (swap! current conj e)))
-                  (neg? diff)
-                  (dotimes [_ (- diff)]
-                    (let [e (peek @current)]
-                      (swap! current pop)
-                      (swap! on-deck conj e))))))))))
+  )
 
 (defn route-cell
   "Defines a cell whose value is the URI fragment."
