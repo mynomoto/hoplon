@@ -8,9 +8,7 @@
 
 (ns hoplon.core
   (:refer-clojure :exclude [subs name])
-  (:import [java.util UUID])
-  (:require [clojure.walk    :as walk]
-            [clojure.string  :as string]
+  (:require [clojure.string  :as string]
             [javelin.core    :as j]))
 
 (create-ns 'js)
@@ -22,16 +20,6 @@
 
 (defn add-doc [docstring pair]
   (if (string? docstring) (list (first pair) docstring (last pair)) pair))
-
-(defn do-def [docstring bindings values]
-  (->> (macroexpand `(let [~bindings ~values]))
-       (second)
-       (walk/postwalk-replace
-         {'clojure.lang.PersistentHashMap/create '(partial apply hash-map)})
-       (partition 2)
-       (map (partial add-doc docstring))
-       (map #(cons 'def %))
-       (list* 'do)))
 
 (defn parse-e [[tag & [head & tail :as args]]]
   (let [kw1? (comp keyword? first)
@@ -52,13 +40,6 @@
          (filter keyword?))))
 
 ;;-- defining macros --------------------------------------------------------;;
-
-(defmacro def-values
-  "Destructuring def, similar to scheme's define-values."
-  ([bindings values]
-   (do-def nil bindings values))
-  ([docstring bindings values]
-   (do-def docstring bindings values)))
 
 (defmacro elem
   "Create an anonymous custom element."
