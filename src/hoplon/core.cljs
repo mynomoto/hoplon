@@ -16,7 +16,7 @@
     [clojure.string :refer [split join blank?]])
   (:require-macros
     [javelin.core   :refer [with-let cell= prop-cell]]
-    [hoplon.core    :refer [cache-key with-timeout with-dom]]))
+    [hoplon.core    :refer [with-timeout with-dom]]))
 
 (declare do! on! $text add-children!)
 
@@ -46,17 +46,6 @@
    (with-let [k (gensym)]
      (f init @ref)
      (add-watch ref k (fn [_ _ old new] (f old new))))))
-
-(defn bust-cache
-  "Experimental."
-  [path]
-  (let [[f & more] (reverse (split path #"/"))
-        [f1 f2]    (split f #"\." 2)]
-    (->> [(str f1 "." (cache-key)) f2]
-         (join ".")
-         (conj more)
-         (reverse)
-         (join "/"))))
 
 ;;;; internal helpers ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
 
