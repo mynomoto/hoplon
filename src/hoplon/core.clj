@@ -47,19 +47,6 @@
   [bind & body]
   `(fn [& args#] (let [~bind (parse-args args#)] ~@body)))
 
-(defmacro defelem
-  "Defines an element function.
-
-  An element function creates a DOM Element (parent) given two arguments:
-
-    * `attrs` - a number of key-value pairs for attributes and their values
-    * `kids` - a sequence of DOM Elements to be appended/used inside
-
-  The returned DOM Element is itself a function which can accept more
-  attributes and child elements."
-  [name & forms]
-  (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `'(defn ~name ~@forms))]
-    `(def ~name (elem ~bind ~@body))))
 
 ;;-- caching dom manipulation macros ----------------------------------------;;
 
@@ -204,35 +191,6 @@
                    (set-setAttribute! (constantly attr*#)))))
              (apply attr# kids#))))))
 
-(defmacro defelem+
-  "Experimental.
-
-  Defines an extended element function.
-
-  An extended element function creates a DOM Element given two arguments:
-
-    * `attrs` - a number of key-value pairs for attributes and their values
-    * `kids` - a sequence of DOM Elements/Cells producing DOM Elements to be
-      appended/used inside
-
-  The returned DOM Element is itself a function which can accept more
-  attributes and child elements:
-
-    (defelem+ counter
-      [{:keys [state class]} kids]
-      (ul :class class, :click #(swap! state (fnil inc 0))
-        (loop-tpl :bingings [kid kids]
-          (li kid))
-
-  Differences to `defelem`:
-
-    - `kids` argument inside the `defelem+` is a Cell of DOM Elements
-      representing any DOM elements supplied during construction or
-      appended/removed at a later point in time.
-    - `attrs` argument must be destructured as it's also a Cell."
-  [name & forms]
-  (let [[_ name [_ [bind & body]]] (macroexpand-1 `'(defn ~name ~@forms))]
-    `(def ~name (elem+ ~bind ~@body))))
 
 (defmacro static
   "Experimental."
