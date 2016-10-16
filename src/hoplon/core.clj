@@ -58,7 +58,7 @@
   The returned DOM Element is itself a function which can accept more
   attributes and child elements."
   [name & forms]
-  (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `(defn ~name ~@forms))]
+  (let [[_ name [_ & [[bind & body]]]] (macroexpand-1 `'(defn ~name ~@forms))]
     `(def ~name (elem ~bind ~@body))))
 
 ;;-- caching dom manipulation macros ----------------------------------------;;
@@ -231,7 +231,7 @@
       appended/removed at a later point in time.
     - `attrs` argument must be destructured as it's also a Cell."
   [name & forms]
-  (let [[_ name [_ [bind & body]]] (macroexpand-1 `(defn ~name ~@forms))]
+  (let [[_ name [_ [bind & body]]] (macroexpand-1 `'(defn ~name ~@forms))]
     `(def ~name (elem+ ~bind ~@body))))
 
 (defmacro static
